@@ -427,44 +427,25 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 	}
 	
 	public String getActionRuntimeInfo(final TLCState state, final Action action, final TLCState succState) {
-		
 		SemanticNode pred = action.pred;
-
 		if (pred.getKind() == ASTConstants.OpApplKind) {
-			if (action.getName().startsWith("Next") && state.toString().contains("mtype |-> XRaftRVReqMsg")) {
+			if (action.getName().startsWith("Next")) {
 				String concernedActionName = null;
 				String concernedActionArgs = null;
-				System.out.println("In writeWithInfoAction, processing action Next with mtype |-> XRaftRVReqMsg");
-
-				System.out.println("In SemanticNode.toString(): " + pred.getLocation().toString());
-    			System.out.println("In SemanticNode.toString(): " + pred.getTreeNode().getHumanReadableImage());
-
-				if (pred.getTreeNode().getHumanReadableImage().contains("DoProcessRequestVoteRequestMsgWithNode")) {
-					System.out.println("ttt");
-				}
-
 				ExprOrOpArgNode beBody = null;
 				SymbolNode beBodyNode = null;
-
 				OpApplNode pred1 = (OpApplNode) pred;
 				final SymbolNode opNode = pred1.getOperator();
 				int opcode = BuiltInOPs.getOpCode(opNode.getName());
 				if (opcode == ToolGlobals.OPCODE_be) {
 					ExprOrOpArgNode[] args = pred1.getArgs();
-					System.out.println("In writeWithInfoAction, args.length: " + args.length);
 					if (args.length != 0) {
 						for (int i = 0; i < args.length; i++) {
-							System.out.println("In writeWithInfoAction, arg: " + args[i].toString());
 							beBody = args[i];
 							if (beBody.getKind() == ASTConstants.OpApplKind) {
-								System.out.println("In writeWithInfoAction, args[i] is OpApplNode.");
 								OpApplNode beBody1 = (OpApplNode) beBody;
 								beBodyNode = beBody1.getOperator();
-								System.out.println(
-										"In writeWithInfoAction, beBodyNode.getName(): " + beBodyNode.getName());
 								concernedActionName = beBodyNode.getName().toString();
-
-								// this.tool.getNextStates(action, beBody, action, c1, s0, resState, nss, cm);
 							}
 						}
 					}
@@ -479,16 +460,12 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 					while ((c1 = Enum.nextElement()) != null) {
 						cList.add(c1);
 					}
-					if (cList.size() > 0) {
-						System.out.println("In writeWithInfoAction, cList.size(): " + cList.size());
-					}
 					boolean canFindSucc = false;
 					for (Context mc : cList) {
 						StateVec sVec = new StateVec(0);
 						this.tool.getNextStatesPublic(action, beBody, ActionItemList.Empty, mc, state, succState, sVec,
 								action.cm);
 						List<TLCState> sList = sVec.stream().collect(Collectors.toList());
-						System.out.println("In writeWithInfoAction, sList.size(): " + sList.size());
 						if (sList.contains(succState)) {
 							canFindSucc = true;
 							List<String> tValueList = new ArrayList<>();
@@ -496,7 +473,6 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 								tValueList.add(String.valueOf(mc.getValue()));
 								mc = mc.next();
 							}
-							// tValueList = tValueList.reversed();
 							Collections.reverse(tValueList);
 							if (tValueList.size() > 0) {
 								concernedActionArgs = tValueList.get(0);
@@ -504,15 +480,13 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 									concernedActionArgs += ", " + tValueList.get(i);
 								}
 							}
-							// concernedActionArgs = String.valueOf(mc.getValue());
 							break;
 						}
 					}
 					if (!canFindSucc) {
 						System.out.println("In writeWithInfoAction, sList produced by all contexts do not contain succState.");
+						return null;
 					}
-					System.out.println("In writeWithInfoAction, get Action runtim info: " + concernedActionName + "("
-							+ concernedActionArgs + ")");
 					return concernedActionName + "(" + concernedActionArgs + ")";
 				}
 			}
@@ -642,9 +616,16 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 			dsWriter.writeStateWithRuntimeInfo(curState, succState, null, 0, 0,
 					seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, Visualization.DEFAULT, action, null,
 					actionName, actionArgs);
+			if (actionName.contains("Next")) {
+				System.out.println("?");
+			}
 		} else {
 			// Write out succState when needed:
 			this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
+		}
+
+		if (runtimeInfo == null && action.getName().startsWith("Next")) {
+			runtimeInfo = this.getActionRuntimeInfo(curState, action, succState);
 		}
 
 		if (!seen) {
