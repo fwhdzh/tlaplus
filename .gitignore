@@ -36,3 +36,11 @@ test.jfr
 tlatools/org.lamport.tlatools/test-model/test.out
 .tlacache/
 .Rproj.user
+
+
+toolbox/*/.project
+tlatools/*/.project
+toolbox/*/.settings/org.eclipse.core.resources.prefs
+toolbox/*/.settings/org.eclipse.m2e.core.prefs
+tlatools/*/.settings/org.eclipse.core.resources.prefs
+tlatools/*/.settings/org.eclipse.m2e.core.prefs
