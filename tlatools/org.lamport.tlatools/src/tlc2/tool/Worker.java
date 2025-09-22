@@ -10,23 +10,35 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.stream.Collectors;
 
+import tla2sany.semantic.ASTConstants;
 import tla2sany.semantic.ExprNode;
+import tla2sany.semantic.ExprOrOpArgNode;
+import tla2sany.semantic.OpApplNode;
 import tla2sany.semantic.OpDeclNode;
 import tla2sany.semantic.SemanticNode;
+import tla2sany.semantic.SymbolNode;
 import tlc2.TLCGlobals;
 import tlc2.output.EC;
 import tlc2.output.MP;
 import tlc2.tool.fp.FPSet;
+import tlc2.tool.impl.ActionItemList;
 import tlc2.tool.impl.CallStackTool;
+import tlc2.tool.impl.ContextEnumerator;
 import tlc2.tool.impl.Tool;
 import tlc2.tool.impl.Tool.Mode;
 import tlc2.tool.queue.IStateQueue;
 import tlc2.util.BufferedRandomAccessFile;
 import tlc2.util.Context;
+import tlc2.util.DotStateWriter;
 import tlc2.util.IStateWriter;
+import tlc2.util.IStateWriter.Visualization;
 import tlc2.util.IdThread;
 import tlc2.util.SetOfStates;
 import tlc2.util.statistics.FixedSizedBucketStatistics;
@@ -413,6 +425,100 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 	public final Object addElement(final TLCState state) {
 		throw new WrongInvocationException("tlc2.tool.Worker.addElement(TLCState) should not be called");
 	}
+	
+	public String getActionRuntimeInfo(final TLCState state, final Action action, final TLCState succState) {
+		
+		SemanticNode pred = action.pred;
+
+		if (pred.getKind() == ASTConstants.OpApplKind) {
+			if (action.getName().startsWith("Next") && state.toString().contains("mtype |-> XRaftRVReqMsg")) {
+				String concernedActionName = null;
+				String concernedActionArgs = null;
+				System.out.println("In writeWithInfoAction, processing action Next with mtype |-> XRaftRVReqMsg");
+
+				System.out.println("In SemanticNode.toString(): " + pred.getLocation().toString());
+    			System.out.println("In SemanticNode.toString(): " + pred.getTreeNode().getHumanReadableImage());
+
+				if (pred.getTreeNode().getHumanReadableImage().contains("DoProcessRequestVoteRequestMsgWithNode")) {
+					System.out.println("ttt");
+				}
+
+				ExprOrOpArgNode beBody = null;
+				SymbolNode beBodyNode = null;
+
+				OpApplNode pred1 = (OpApplNode) pred;
+				final SymbolNode opNode = pred1.getOperator();
+				int opcode = BuiltInOPs.getOpCode(opNode.getName());
+				if (opcode == ToolGlobals.OPCODE_be) {
+					ExprOrOpArgNode[] args = pred1.getArgs();
+					System.out.println("In writeWithInfoAction, args.length: " + args.length);
+					if (args.length != 0) {
+						for (int i = 0; i < args.length; i++) {
+							System.out.println("In writeWithInfoAction, arg: " + args[i].toString());
+							beBody = args[i];
+							if (beBody.getKind() == ASTConstants.OpApplKind) {
+								System.out.println("In writeWithInfoAction, args[i] is OpApplNode.");
+								OpApplNode beBody1 = (OpApplNode) beBody;
+								beBodyNode = beBody1.getOperator();
+								System.out.println(
+										"In writeWithInfoAction, beBodyNode.getName(): " + beBodyNode.getName());
+								concernedActionName = beBodyNode.getName().toString();
+
+								// this.tool.getNextStates(action, beBody, action, c1, s0, resState, nss, cm);
+							}
+						}
+					}
+					if (beBody == null || beBodyNode == null) {
+						return null;
+					}
+					ContextEnumerator Enum = this.tool.contexts(pred1, action.con, state,
+							TLCState.Empty.createEmpty().setPredecessor(state).setAction(action), EvalControl.Clear,
+							action.cm);
+					List<Context> cList = new ArrayList<>();
+					Context c1;
+					while ((c1 = Enum.nextElement()) != null) {
+						cList.add(c1);
+					}
+					if (cList.size() > 0) {
+						System.out.println("In writeWithInfoAction, cList.size(): " + cList.size());
+					}
+					boolean canFindSucc = false;
+					for (Context mc : cList) {
+						StateVec sVec = new StateVec(0);
+						this.tool.getNextStatesPublic(action, beBody, ActionItemList.Empty, mc, state, succState, sVec,
+								action.cm);
+						List<TLCState> sList = sVec.stream().collect(Collectors.toList());
+						System.out.println("In writeWithInfoAction, sList.size(): " + sList.size());
+						if (sList.contains(succState)) {
+							canFindSucc = true;
+							List<String> tValueList = new ArrayList<>();
+							while (mc.hasNext()) {
+								tValueList.add(String.valueOf(mc.getValue()));
+								mc = mc.next();
+							}
+							// tValueList = tValueList.reversed();
+							Collections.reverse(tValueList);
+							if (tValueList.size() > 0) {
+								concernedActionArgs = tValueList.get(0);
+								for (int i = 1; i < tValueList.size(); i++) {
+									concernedActionArgs += ", " + tValueList.get(i);
+								}
+							}
+							// concernedActionArgs = String.valueOf(mc.getValue());
+							break;
+						}
+					}
+					if (!canFindSucc) {
+						System.out.println("In writeWithInfoAction, sList produced by all contexts do not contain succState.");
+					}
+					System.out.println("In writeWithInfoAction, get Action runtim info: " + concernedActionName + "("
+							+ concernedActionArgs + ")");
+					return concernedActionName + "(" + concernedActionArgs + ")";
+				}
+			}
+		}
+		return null;
+	}
 
 	@Override
 	public final Object addElement(final TLCState curState, final Action action, final TLCState succState) {
@@ -523,8 +629,24 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 			throws IOException {
 		final long fp = succState.fingerPrint(tool);
 		final boolean seen = this.theFPSet.put(fp);
-		// Write out succState when needed:
-		this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
+		
+		String runtimeInfo = this.getActionRuntimeInfo(curState, action, succState);
+		String actionName = null;
+		String actionArgs = null;
+		if (runtimeInfo != null) {
+			actionName = runtimeInfo.split("\\(")[0];
+			actionArgs = runtimeInfo.split("\\(")[1].split("\\)")[0];
+		}
+		if (this.allStateWriter instanceof DotStateWriter && actionName != null && actionArgs != null) {
+			DotStateWriter dsWriter = (DotStateWriter) this.allStateWriter;
+			dsWriter.writeStateWithRuntimeInfo(curState, succState, null, 0, 0,
+					seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, Visualization.DEFAULT, action, null,
+					actionName, actionArgs);
+		} else {
+			// Write out succState when needed:
+			this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
+		}
+
 		if (!seen) {
 			// Write succState to trace only if it satisfies the
 			// model constraints. Do not enqueue it yet, but wait

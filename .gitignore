@@ -44,3 +44,4 @@ toolbox/*/.settings/org.eclipse.core.resources.prefs
 toolbox/*/.settings/org.eclipse.m2e.core.prefs
 tlatools/*/.settings/org.eclipse.core.resources.prefs
 tlatools/*/.settings/org.eclipse.m2e.core.prefs
+.vscode

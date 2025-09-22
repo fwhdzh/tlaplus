@@ -886,6 +886,12 @@ public abstract class Tool
 				TLCState.Empty.createEmpty().setPredecessor(state).setAction(action), functor, action.cm);
 		return false;
   }
+
+  public final TLCState getNextStatesPublic(final Action action, SemanticNode pred, ActionItemList acts, Context c,
+      TLCState s0, TLCState s1, INextStateFunctor nss, CostModel cm) {
+    TLCState result = getNextStates(action, pred, acts, c, s0, s1, nss, cm);
+    return result;
+  }
   
   protected abstract TLCState getNextStates(final Action action, SemanticNode pred, ActionItemList acts, Context c,
                                        TLCState s0, TLCState s1, INextStateFunctor nss, CostModel cm);

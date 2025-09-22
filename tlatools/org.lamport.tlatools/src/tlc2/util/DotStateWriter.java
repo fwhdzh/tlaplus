@@ -218,6 +218,109 @@ public class DotStateWriter extends StateWriter {
 		writeState(state, successor, actionChecks, from, length, stateFlags, Visualization.DEFAULT, null, null);
 	}
 
+	public synchronized void writeRuntimeInfo(TLCState state, TLCState successor, String actionName,
+			String actionArgs) {
+		final long sfp = successor.fingerPrint();
+		final long cfp = state.fingerPrint();
+
+		// Write the transition edge.
+		this.writer.append(Long.toString(cfp));
+		this.writer.append(" -> ");
+		this.writer.append(Long.toString(sfp));
+
+		// Only colorize edges if specified. Default to black otherwise.
+		final String color = "black" ;
+		String actionRuntimeInfo = "" + actionName + "(" + actionArgs + ")";
+		final String labelFmtStr = " [label=\"%s%s\",color=\"%s\",fontcolor=\"%s\"]";
+		String  transitionLabel = String.format(labelFmtStr, actionRuntimeInfo, "", color, color);
+		this.writer.append(transitionLabel);
+		this.writer.append(";\n");
+
+	}
+
+	/* (non-Javadoc)
+	 * @see tlc2.util.StateWriter#writeState(tlc2.tool.TLCState, tlc2.tool.TLCState, java.lang.String, boolean, tlc2.util.IStateWriter.Visualization)
+	 */
+	public synchronized void writeStateWithRuntimeInfo(TLCState state, TLCState successor, BitVector actionChecks, int from, int length, short stateFlags,
+			Visualization visualization, Action action, SemanticNode pred, String actionName, String actionArgs) {
+		if (!stuttering && visualization == Visualization.STUTTERING) {
+			// Do not render stuttering transitions unless requested.
+			return;
+		}
+		
+		final long sfp = successor.fingerPrint();
+		final long cfp = state.fingerPrint();
+
+		if (strict != null) {
+			// XORing the fingerprints of the two nodes may result in the omission of this
+			// edge. However, this is expected to be a minor issue, as the DotStateWriter
+			// primarily handles small graphs for visualization with GraphViz.
+			if (!strict.add(cfp ^ sfp)) {
+				return;
+			}
+		}
+		
+		final String successorsFP = Long.toString(sfp);
+		
+		// Write the transition edge.
+		this.writer.append(Long.toString(cfp));
+		this.writer.append(" -> ");
+		this.writer.append(successorsFP);
+		if (visualization == Visualization.STUTTERING) {
+			this.writer.append(" [style=\"dashed\",color=\"lightgray\"];\n");
+		} else {
+			// Add the transition edge label.
+			if (action != null) {
+				// String transitionLabel = this.dotTransitionLabel(state, successor, action,
+				// pred);
+				// this.writer.append(transitionLabel);
+
+				final String color = "black";
+				String actionRuntimeInfo = "" + actionName + "(" + actionArgs + ")";
+				final String labelFmtStr = " [label=\"%s%s\",color=\"%s\",fontcolor=\"%s\"]";
+				String transitionLabel = String.format(labelFmtStr, actionRuntimeInfo, "", color, color);
+				this.writer.append(transitionLabel);
+			}
+			
+			this.writer.append(";\n");
+			
+			// If the successor is new, print the state's label. Labels are printed
+			// when writeState sees the successor. It does not print the label for
+			// the current state. If it would print the label for the current state,
+			// the init state labels would be printed twice.
+	    	if (!isSet(stateFlags, IStateWriter.IsSeen)) {
+				// Write the successor's label.
+				this.writer.append(successorsFP);
+				this.writer.append(" [label=\"");
+				if (TLCGlobals.printDiffsOnly) {
+					this.writer.append(states2dot(state.evalStateLevelAlias(), successor.evalStateLevelAlias()));
+				} else {
+					this.writer.append(states2dot(successor.evalStateLevelAlias()));
+				}
+				this.writer.append("\",tooltip=\"");
+				this.writer.append(states2dot(successor));
+		    	if (isSet(stateFlags, IStateWriter.IsNotInModel)) {
+		    		this.writer.append("\",style = filled, fillcolor=lightyellow]");
+				} else {
+					this.writer.append("\"]");
+				}
+				this.writer.append(";\n");
+			}
+		}
+		
+		maintainRanks(state);
+		
+		if (snapshot) {
+			try {
+				this.snapshot();
+			} catch (IOException e) {
+				// Let's assume this never happens!
+				e.printStackTrace();
+				throw new RuntimeException(e);
+			}
+		}
+	}
+
 	/* (non-Javadoc)
 	 * @see tlc2.util.StateWriter#writeState(tlc2.tool.TLCState, tlc2.tool.TLCState, java.lang.String, boolean, tlc2.util.IStateWriter.Visualization)
 	 */
