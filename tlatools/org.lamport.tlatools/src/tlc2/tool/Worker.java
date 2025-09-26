@@ -425,33 +425,65 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 	public final Object addElement(final TLCState state) {
 		throw new WrongInvocationException("tlc2.tool.Worker.addElement(TLCState) should not be called");
 	}
+
+	public String getActionArgsFromContext(Context desiredContext) {
+		String concernedActionArgs = null;
+		Context itr = desiredContext;
+		List<String> tValueList = new ArrayList<>();
+		while (itr.hasNext()) {
+			tValueList.add(String.valueOf(itr.getValue()));
+			itr = itr.next();
+		}
+		Collections.reverse(tValueList);
+		if (tValueList.size() > 0) {
+			concernedActionArgs = tValueList.get(0);
+			for (int i = 1; i < tValueList.size(); i++) {
+				concernedActionArgs += ", " + tValueList.get(i);
+			}
+		}
+		return concernedActionArgs;
+	}
+
+	public OpApplNode getBeBody(OpApplNode pred1) {
+		OpApplNode beBody = null;
+		ExprOrOpArgNode[] args = pred1.getArgs();
+		if (args.length != 0) {
+			for (int i = 0; i < args.length; i++) {
+				if (args[i].getKind() == ASTConstants.OpApplKind) {
+					beBody = (OpApplNode) args[i];
+					break;
+				}
+			}
+		}
+		return beBody;
+	}
+
+	public String getActionsNameForBEBody(OpApplNode beBody) {
+		String concernedActionName = null;
+		SymbolNode beBodyNode = beBody.getOperator();
+		concernedActionName = beBodyNode.getName().toString();
+		if (beBody == null || beBodyNode == null) {
+			return null;
+		}
+		return concernedActionName;
+	}
 	
 	public String getActionRuntimeInfo(final TLCState state, final Action action, final TLCState succState) {
-		SemanticNode pred = action.pred;
-		if (pred.getKind() == ASTConstants.OpApplKind) {
-			if (action.getName().startsWith("Next")) {
-				String concernedActionName = null;
-				String concernedActionArgs = null;
-				ExprOrOpArgNode beBody = null;
-				SymbolNode beBodyNode = null;
+		String concernedActionName = null;
+		String concernedActionArgs = null;
+		if (action.getName().startsWith("Next")) {
+			SemanticNode pred = action.pred;
+			if (pred.getKind() == ASTConstants.OpApplKind) {
+				OpApplNode beBody = null;
 				OpApplNode pred1 = (OpApplNode) pred;
 				final SymbolNode opNode = pred1.getOperator();
 				int opcode = BuiltInOPs.getOpCode(opNode.getName());
 				if (opcode == ToolGlobals.OPCODE_be) {
-					ExprOrOpArgNode[] args = pred1.getArgs();
-					if (args.length != 0) {
-						for (int i = 0; i < args.length; i++) {
-							beBody = args[i];
-							if (beBody.getKind() == ASTConstants.OpApplKind) {
-								OpApplNode beBody1 = (OpApplNode) beBody;
-								beBodyNode = beBody1.getOperator();
-								concernedActionName = beBodyNode.getName().toString();
-							}
-						}
-					}
-					if (beBody == null || beBodyNode == null) {
+					beBody = getBeBody(pred1);
+					if (beBody == null) {
 						return null;
 					}
+					concernedActionName = getActionsNameForBEBody(beBody);
 					ContextEnumerator Enum = this.tool.contexts(pred1, action.con, state,
 							TLCState.Empty.createEmpty().setPredecessor(state).setAction(action), EvalControl.Clear,
 							action.cm);
@@ -461,6 +493,7 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 						cList.add(c1);
 					}
 					boolean canFindSucc = false;
+					Context desiredContext = null;
 					for (Context mc : cList) {
 						StateVec sVec = new StateVec(0);
 						this.tool.getNextStatesPublic(action, beBody, ActionItemList.Empty, mc, state, succState, sVec,
@@ -468,25 +501,16 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 						List<TLCState> sList = sVec.stream().collect(Collectors.toList());
 						if (sList.contains(succState)) {
 							canFindSucc = true;
-							List<String> tValueList = new ArrayList<>();
-							while (mc.hasNext()) {
-								tValueList.add(String.valueOf(mc.getValue()));
-								mc = mc.next();
-							}
-							Collections.reverse(tValueList);
-							if (tValueList.size() > 0) {
-								concernedActionArgs = tValueList.get(0);
-								for (int i = 1; i < tValueList.size(); i++) {
-									concernedActionArgs += ", " + tValueList.get(i);
-								}
-							}
+							desiredContext = mc;
 							break;
 						}
 					}
 					if (!canFindSucc) {
-						System.out.println("In writeWithInfoAction, sList produced by all contexts do not contain succState.");
+						System.out.println(
+								"In writeWithInfoAction, sList produced by all contexts do not contain succState.");
 						return null;
 					}
+					concernedActionArgs = getActionArgsFromContext(desiredContext);
 					return concernedActionName + "(" + concernedActionArgs + ")";
 				}
 			}
