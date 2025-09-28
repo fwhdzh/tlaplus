@@ -628,28 +628,25 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 		final long fp = succState.fingerPrint(tool);
 		final boolean seen = this.theFPSet.put(fp);
 		
-		String runtimeInfo = this.getActionRuntimeInfo(curState, action, succState);
-		String actionName = null;
-		String actionArgs = null;
-		if (runtimeInfo != null) {
-			actionName = runtimeInfo.split("\\(")[0];
-			actionArgs = runtimeInfo.split("\\(")[1].split("\\)")[0];
-		}
-		if (this.allStateWriter instanceof DotStateWriter && actionName != null && actionArgs != null) {
-			DotStateWriter dsWriter = (DotStateWriter) this.allStateWriter;
-			dsWriter.writeStateWithRuntimeInfo(curState, succState, null, 0, 0,
+		if (this.allStateWriter instanceof DotStateWriter) {
+			String runtimeInfo = this.getActionRuntimeInfo(curState, action, succState);
+			String actionName = null;
+			String actionArgs = null;
+			if (runtimeInfo != null) {
+				actionName = runtimeInfo.split("\\(")[0];
+				actionArgs = runtimeInfo.split("\\(")[1].split("\\)")[0];
+			}
+			if (actionName != null && actionArgs != null) {
+				DotStateWriter dsWriter = (DotStateWriter) this.allStateWriter;
+				dsWriter.writeStateWithRuntimeInfo(curState, succState, null, 0, 0,
 					seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, Visualization.DEFAULT, action, null,
 					actionName, actionArgs);
-			if (actionName.contains("Next")) {
-				System.out.println("?");
+			} else {
+				this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
 			}
 		} else {
 			// Write out succState when needed:
 			this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
-		}
-
-		if (runtimeInfo == null && action.getName().startsWith("Next")) {
-			runtimeInfo = this.getActionRuntimeInfo(curState, action, succState);
 		}
 
 		if (!seen) {
