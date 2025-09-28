@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -593,7 +594,187 @@ public final class Worker extends IdThread implements IWorker, INextStateFunctor
 			throw new WrappingRuntimeException(e, succState);
 		}
 	}
+
+	public String getActionArgsFromContextWithParams(List<SymbolNode> paramsList, Context desiredContext) {
+
+		List<Object> objList = new ArrayList<>();
+		for (SymbolNode sn : paramsList) {
+			Object obj = desiredContext.lookup(sn);
+			objList.add(obj);
+		}
+
+		List<String> tValueList = new ArrayList<>();
+		for (Object obj : objList) {
+			tValueList.add(obj.toString());
+		}
+
+		String concernedActionArgs = null;
+		if (tValueList.size() > 0) {
+			concernedActionArgs = tValueList.get(0);
+			for (int i = 1; i < tValueList.size(); i++) {
+				concernedActionArgs += ", " + tValueList.get(i);
+			}
+		}
+		return concernedActionArgs;
+	}
 	
+	public String getActionRuntimeInfoWithContext(final TLCState state, final Action action, final TLCState succState,
+			Context c) {
+		String concernedActionName = null;
+		String concernedActionArgs = null;
+		if (action.getName().startsWith("Next")) {
+			// pred is something like "\E m \in allMessages : DoProcessRequestVoteRequestMsg(m)"
+			if (action.pred.getKind() != ASTConstants.OpApplKind) {
+				return null;
+			}
+			OpApplNode pred = (OpApplNode) action.pred;
+
+			int opcode = BuiltInOPs.getOpCode(pred.getOperator().getName());
+			if (opcode != ToolGlobals.OPCODE_be) {
+				return null;
+			}
+			OpApplNode beBody = null;
+			// beBody is something like "DoProcessRequestVoteRequestMsg(m)"
+			beBody = getBeBody(pred);
+			if (beBody == null) {
+				return null;
+			}
+			// paramsList is something like [m]
+			List<SymbolNode> paramsList = new ArrayList<>();
+			ExprOrOpArgNode[] operands = beBody.getArgs();
+			for (int i = 0; i < operands.length; i++) {
+				OpApplNode n = (OpApplNode) operands[i];
+				HashSet<SymbolNode> snList = n.getAllParams();
+				for (SymbolNode sn : snList) {
+					paramsList.add(sn);
+				}
+			}
+			// compute the runtime info for the action
+			concernedActionName = getActionsNameForBEBody(beBody);
+			Context desiredContext = c;
+			concernedActionArgs = getActionArgsFromContextWithParams(paramsList, desiredContext);
+			return concernedActionName + "(" + concernedActionArgs + ")";
+
+		}
+		return null;
+	}
+
+	private final boolean isSeenStateWithContext(final TLCState curState, final TLCState succState, final Action action, Context c)
+			throws IOException {
+		final long fp = succState.fingerPrint(tool);
+		final boolean seen = this.theFPSet.put(fp);
+		
+		String runtimeInfo = this.getActionRuntimeInfoWithContext(curState, action, succState, c);
+		String actionName = null;
+		String actionArgs = null;
+		if (runtimeInfo != null) {
+			actionName = runtimeInfo.split("\\(")[0];
+			actionArgs = runtimeInfo.split("\\(")[1].split("\\)")[0];
+		}
+		if (this.allStateWriter instanceof DotStateWriter && actionName != null && actionArgs != null) {
+			DotStateWriter dsWriter = (DotStateWriter) this.allStateWriter;
+			dsWriter.writeStateWithRuntimeInfo(curState, succState, null, 0, 0,
+					seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, Visualization.DEFAULT, action, null,
+					actionName, actionArgs);
+		} else {
+			// Write out succState when needed:
+			this.allStateWriter.writeState(curState, succState, seen ? IStateWriter.IsSeen : IStateWriter.IsUnseen, action);
+		}
+		if (!seen) {
+			// Write succState to trace only if it satisfies the
+			// model constraints. Do not enqueue it yet, but wait
+			// for implied actions and invariants to be checked.
+			// Those checks - if violated - will cause model checking
+			// to terminate. Thus we cannot let concurrent workers start
+			// exploring this new state. Conversely, the state has to
+			// be in the trace in case either invariant or implied action
+			// checks want to print the trace.
+			this.writeState(curState, fp, succState);
+			if (coverage) {	action.cm.incSecondary(); }
+		}
+		// For liveness checking:
+		if (this.checkLiveness || mode == Mode.MC_DEBUG)
+		{
+			this.setOfStates.put(fp, succState, tool);
+		}
+		return seen;
+	}
+
+	public final Object addElementWithContext(final TLCState curState, final Action action, final TLCState succState, Context c) {
+	    if (coverage) { action.cm.incInvocations(); }
+		this.statesGenerated++;
+		
+		try {
+			if (!this.tool.isGoodState(succState)) {
+				this.doNextSetErr(curState, succState, action);
+				// It seems odd to subsume this under IVE, but we consider
+				// it an invariant that the values of all variables have to
+				// be defined.
+				throw new InvariantViolatedException();
+			}
+			
+			// Check if state is excluded by a state or action constraint.
+			// Set the predecessor to make TLC!TLCGet("level") work in
+			// state constraints, i.e. isInModel.
+			final boolean inModel = (this.tool.isInModel(succState.setPredecessor(curState).setAction(action))
+					&& this.tool.isInActions(curState, succState));
+			
+			// Check if state is new or has been seen earlier.
+			boolean unseen = true;
+			if (inModel) {
+				unseen = !isSeenStateWithContext(curState, succState, action, c);
+			} else if (allStateWriter.isConstrained()) {
+				final ExprNode[] sConstraints = this.tool.getModelConstraints();
+				for (int i = 0; i < sConstraints.length; i++) {
+					if (!this.tool.isInModel(sConstraints[i], succState)) {
+						this.allStateWriter.writeState(curState, succState, IStateWriter.IsNotInModel, action,
+								sConstraints[i]);
+					}
+				}
+				final ExprNode[] aConstraints = this.tool.getActionConstraints();
+				for (int i = 0; i < aConstraints.length; i++) {
+					if (!this.tool.isInActions(aConstraints[i], curState, succState)) {
+						this.allStateWriter.writeState(curState, succState, IStateWriter.IsNotInModel, action,
+								aConstraints[i]);
+					}
+				}
+			}
+			
+			// Check if succState violates any invariant:
+			if (unseen) {
+				if (this.doNextCheckInvariants(curState, succState)) {
+					throw new InvariantViolatedException();
+				}
+			}
+			
+			// Check if the state violates any implied action. We need to do it
+			// even if succState is not new.
+			if (this.doNextCheckImplied(curState, succState)) {
+				throw new InvariantViolatedException();
+			}
+			
+			if (inModel && unseen) {
+				// The state is inModel, unseen and neither invariants
+				// nor implied actions are violated. It is thus eligible
+				// for further processing by other workers.
+				this.squeue.sEnqueue(succState);
+				if (variableCoverage) { 
+					for (final OpDeclNode odn : TLCState.vars) {
+						odn.count(succState.lookup(odn.getName()));
+					}
+				}
+			}
+			return this;
+		} catch (Exception e) {
+			// We can't throw Exception here because it would violate the contract of
+			// tlc2.tool.INextStateFunctor.addElement(TLCState, Action, TLCState). Thus,
+			// wrap the exception regardless of whether it is a (unchecked) runtime
+			// exception or not. We expect the outer code in run(..) above to unwrap this
+			// exception.  As a bonus, we can attach succState and send it up the stack.
+			throw new WrappingRuntimeException(e, succState);
+		}
+	}
+
 	@Override
 	public TLCState addUnsatisfiedState(final TLCState curState, final Action action, final TLCState succState,
 			final SemanticNode pred, final Context c) {
